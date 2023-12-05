@@ -15,7 +15,7 @@ update_files_tar="$FILES"/files/update.tar
 
 
 state_dir="${mender_root_dir}/var/lib/mender/dir-overlay-install"
-manifest_file="${mender_root_dir}$state_dir/manifest"
+manifest_file="$state_dir/manifest"
 manifest_file_prev="$state_dir/manifest.prev"
 prev_files_tar="$state_dir/backup.tar"
 
