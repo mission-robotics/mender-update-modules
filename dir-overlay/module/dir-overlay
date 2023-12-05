@@ -6,16 +6,20 @@ set -x
 STATE="$1"
 FILES="$2"
 
+
+mender_root_dir=${MENDER_ROOT_DIR:-""}
 backup_dir="$FILES"/tmp
 dest_dir_file="$FILES"/files/dest_dir
 manifest_file_from_deployment="$FILES"/files/manifest
 update_files_tar="$FILES"/files/update.tar
 
 
-state_dir="/var/lib/mender/dir-overlay-install"
-manifest_file="$state_dir/manifest"
+state_dir="${mender_root_dir}/var/lib/mender/dir-overlay-install"
+manifest_file="${mender_root_dir}$state_dir/manifest"
 manifest_file_prev="$state_dir/manifest.prev"
 prev_files_tar="$state_dir/backup.tar"
+
+dest_dir=${mender_root_dir}$(cat $dest_dir_file)
 
 # Summary of module implementation
 #
@@ -69,7 +73,7 @@ case "$STATE" in
             exit 1
         fi
 
-        dest_dir=$(cat $dest_dir_file)
+        
         mkdir -p $dest_dir $state_dir
 
         if [ -e $manifest_file ]; then
@@ -109,7 +113,6 @@ case "$STATE" in
             echo "This update module must be run by a superuser. Aborting..."
             exit 1
         fi
-        dest_dir=$(cat $dest_dir_file)
 
         test -f $prev_files_tar || exit 0
 
