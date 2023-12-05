@@ -55,6 +55,29 @@ dest_dir=${mender_root_dir}$(cat $dest_dir_file)
 #    the deployment
 #
 
+mount_root_rw() {
+    mount_otions=$(findmnt -n -o OPTIONS /)
+    if echo ${mount_otions} | grep -q "ro,"; then
+        echo "Rootfs is already mounted read-write." 
+        return 0
+    fi
+
+    root_device=$(findmnt -n -o SOURCE /)
+    mount -o remount,rw ${root_device} /
+    mount_otions=$(findmnt -n -o OPTIONS /)
+    if ! echo ${mount_otions} | grep -q "ro,"; then
+        echo "Rootfs ${root_device} could not be mounted as read-write. Aborting..." >&2
+        exit 1
+    fi
+    return 0
+}
+
+mount_root_ro() {
+    root_device=$(findmnt -n -o SOURCE /)
+    mount -o remount,rw ${root_device} /
+}
+
+
 [ -n "${UID}" ] || UID=$(id -u)
 
 case "$STATE" in
@@ -73,6 +96,7 @@ case "$STATE" in
             exit 1
         fi
 
+        mount_root_rw
         
         mkdir -p $dest_dir $state_dir
 
@@ -98,6 +122,7 @@ case "$STATE" in
         mkdir -p ${dest_dir}
         tar -xpf ${update_files_tar} -C ${dest_dir}
         sync
+        mount_root_ro
         ;;
 
     ArtifactCommit)
@@ -105,7 +130,9 @@ case "$STATE" in
             echo "This update module must be run by a superuser. Aborting..."
             exit 1
         fi
+        mount_root_rw
         mv $manifest_file_from_deployment $manifest_file
+        mount_root_ro
         ;;
 
     ArtifactRollback)
@@ -116,8 +143,10 @@ case "$STATE" in
 
         test -f $prev_files_tar || exit 0
 
+        mount_root_rw
         cp $manifest_file_prev $manifest_file
         tar -xpf ${prev_files_tar} -C ${dest_dir}
+        mount_root_ro
         ;;
 esac
 
