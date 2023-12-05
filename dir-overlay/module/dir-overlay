@@ -19,7 +19,6 @@ manifest_file="$state_dir/manifest"
 manifest_file_prev="$state_dir/manifest.prev"
 prev_files_tar="$state_dir/backup.tar"
 
-dest_dir=${mender_root_dir}$(cat $dest_dir_file)
 
 # Summary of module implementation
 #
@@ -56,6 +55,10 @@ dest_dir=${mender_root_dir}$(cat $dest_dir_file)
 #
 
 mount_root_rw() {
+   if [ -n "$MENDER_INSTALL_NO_REMOUNT" ]; then 
+        return 0
+    fi
+ 
     mount_otions=$(findmnt -n -o OPTIONS /)
     if echo ${mount_otions} | grep -q "ro,"; then
         echo "Rootfs is already mounted read-write." 
@@ -73,6 +76,10 @@ mount_root_rw() {
 }
 
 mount_root_ro() {
+    if [ -n "$MENDER_INSTALL_NO_REMOUNT" ]; then 
+        return 0
+    fi
+ 
     root_device=$(findmnt -n -o SOURCE /)
     mount -o remount,rw ${root_device} /
 }
@@ -98,6 +105,8 @@ case "$STATE" in
 
         mount_root_rw
         
+        dest_dir=${mender_root_dir}$(cat $dest_dir_file)
+
         mkdir -p $dest_dir $state_dir
 
         if [ -e $manifest_file ]; then
@@ -142,6 +151,8 @@ case "$STATE" in
         fi
 
         test -f $prev_files_tar || exit 0
+
+        dest_dir=${mender_root_dir}$(cat $dest_dir_file)
 
         mount_root_rw
         cp $manifest_file_prev $manifest_file
