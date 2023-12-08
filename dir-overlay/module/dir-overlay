@@ -59,16 +59,16 @@ mount_root_rw() {
         return 0
     fi
  
-    mount_otions=$(findmnt -n -o OPTIONS /)
-    if echo ${mount_otions} | grep -q "ro,"; then
+    mount_options=$(findmnt -n -o OPTIONS /)
+    if [[ $mount_options == rw,* ]]; then
         echo "Rootfs is already mounted read-write." 
         return 0
     fi
 
     root_device=$(findmnt -n -o SOURCE /)
     mount -o remount,rw ${root_device} /
-    mount_otions=$(findmnt -n -o OPTIONS /)
-    if ! echo ${mount_otions} | grep -q "ro,"; then
+    mount_options=$(findmnt -n -o OPTIONS /)
+    if [[ $mount_options == ro,* ]]; then
         echo "Rootfs ${root_device} could not be mounted as read-write. Aborting..." >&2
         exit 1
     fi
