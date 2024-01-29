@@ -114,7 +114,7 @@ case "$STATE" in
 
             # Copy permissions and ownership from destination directory
             chmod $(stat -c %a $dest_dir) $backup_dir
-            chown $(stat -c "%U:%G" $dest_dir) $backup_dir
+            chown $(stat -c "%u:%g" $dest_dir) $backup_dir
 
             for file in $(cat $manifest_file); do
                 tar -cpf - $dest_dir/$file | (cd $backup_dir/ && tar -xpf -)
