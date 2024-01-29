@@ -11,13 +11,13 @@ mender_root_dir=${MENDER_ROOT_DIR:-""}
 backup_dir="$FILES"/tmp
 dest_dir_file="$FILES"/files/dest_dir
 manifest_file_from_deployment="$FILES"/files/manifest
-update_files_tar="$FILES"/files/update.tar
+update_files_tar="$FILES"/files/update.tar.gz
 
 
 state_dir="${mender_root_dir}/var/lib/mender/dir-overlay-install"
 manifest_file="$state_dir/manifest"
-manifest_file_prev="$state_dir/manifest.prev"
-prev_files_tar="$state_dir/backup.tar"
+manifest_file_prev="/var/volatile/tmp/mender_manifest.prev"
+prev_files_tar="/var/volatile/tmp/mender_backup.tar.gz"
 
 
 # Summary of module implementation
@@ -116,11 +116,11 @@ case "$STATE" in
             chmod $(stat -c %a $dest_dir) $backup_dir
             chown $(stat -c "%u:%g" $dest_dir) $backup_dir
 
-            for file in $(cat $manifest_file); do
-                tar -cpf - $dest_dir/$file | (cd $backup_dir/ && tar -xpf -)
-            done
-            tar -cpf ${prev_files_tar} -C ${backup_dir} .
+            sed "s|^|${dest_dir}|" $manifest_file  > /tmp/manifest
 
+            tar -zcf ${prev_files_tar} -T /tmp/manifest
+            rm /tmp/manifest
+            
             for file in $(cat $manifest_file); do
                 rm $dest_dir/$file
             done
