@@ -159,7 +159,8 @@ else
   exit 1
 fi
 
-find $file_tree -type f | sed "s|^$file_tree/||" > $manifest_file
+REALPATH=$(realpath $file_tree)
+find ${REALPATH} -type f | sed "s|^${REALPATH}/||" > $manifest_file
 
 # Create dest_dir file in plain text
 echo "$dest_dir" > $dest_dir_file
