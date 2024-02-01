@@ -1,7 +1,6 @@
 #!/bin/sh
 
 set -e
-set -x
 
 STATE="$1"
 FILES="$2"
@@ -16,18 +15,23 @@ update_files_tar="$FILES"/files/update.tar.gz
 
 state_dir="${mender_root_dir}/var/lib/mender/dir-overlay-install"
 manifest_file="$state_dir/manifest"
-manifest_file_prev="/var/volatile/tmp/mender_manifest.prev"
-prev_files_tar="/var/volatile/tmp/mender_backup.tar.gz"
+manifest_file_prev="${backup_dir}/mender_manifest"
+backup_file="${backup_dir}/mender_backup"
 
 
 # Summary of module implementation
 #
 # NOTE! This module stores state in /var/lib/mender
 #
+# NOTE! This module checks if the rootfs is mounted read-write, and if not, it
+# will attempt to remount it as read-write. 
+# At the end of the module, it will attempt to remount the rootfs as read-only
+# 
+#
 # In ArtifactInstall state:
 #
-# If a manifest file exists, which means that there has been a previous
-# successful deployment with this module:
+# If a manifest file with the name of the artifact exists, which means that there has been a previous
+# successful deployment of this artifact with this module:
 #
 #    1. Create a backup of current deployment, the manifest file
 #       is parsed to determinate which files where installed on last successful
@@ -54,6 +58,8 @@ prev_files_tar="/var/volatile/tmp/mender_backup.tar.gz"
 #    the deployment
 #
 
+ROOT_FS_WAS_MOUNTED_RW=0
+
 mount_root_rw() {
    if [ -n "$MENDER_INSTALL_NO_REMOUNT" ]; then 
         return 0
@@ -61,7 +67,8 @@ mount_root_rw() {
  
     mount_options=$(findmnt -n -o OPTIONS /)
     if [[ $mount_options == rw,* ]]; then
-        echo "Rootfs is already mounted read-write." 
+        ROOT_FS_WAS_MOUNTED_RW=1
+        echo "Rootfs is already mounted read-write." >&2
         return 0
     fi
 
@@ -72,6 +79,7 @@ mount_root_rw() {
         echo "Rootfs ${root_device} could not be mounted as read-write. Aborting..." >&2
         exit 1
     fi
+    echo "Rootfs is now mounted read-write." >&2
     return 0
 }
 
@@ -79,13 +87,37 @@ mount_root_ro() {
     if [ -n "$MENDER_INSTALL_NO_REMOUNT" ]; then 
         return 0
     fi
+    if [ $ROOT_FS_WAS_MOUNTED_RW -eq 1 ]; then
+        echo "Rootfs was already mounted read-write, not remounting as read-only." >&2
+        return 0
+    fi
  
     root_device=$(findmnt -n -o SOURCE /)
-    mount -o remount,rw ${root_device} /
+    set -x
+    sync
+    mount -o remount,ro ${root_device} / && (echo "Rootfs is now mounted read-only." >&2) || (echo "Rootfs ${root_device} could not be mounted as read-only. " >&2)
+    set +x    
 }
 
 
 [ -n "${UID}" ] || UID=$(id -u)
+
+if [ -z "${FILES}/header/type-info" ]; then
+    echo "Missing type-info file in ${FILES}/header/. Can't determin the artifact name/version" >&2
+    exit 1
+fi
+
+# WEe need to get the artifact name and version from the type-info file.
+# but there is no jq installed in the image, so we use python to parse the json
+VERSION_VALUE=$(cat ${FILES}/header/type-info | python3 -c "
+import sys, json
+json_data = json.load(sys.stdin)
+for key, value in json_data['artifact_provides'].items():
+    print(key, '|', value)
+")
+IFS='|' read -ra PARTS <<< "$VERSION_VALUE"
+ARTIFACT_NAME="${PARTS[0]/ /}"
+FILE_ID="${ARTIFACT_NAME/.version/}" # remove .version from the artifact name
 
 case "$STATE" in
 
@@ -99,7 +131,7 @@ case "$STATE" in
 
     ArtifactInstall)
         if [ $UID -ne 0 ] ; then
-            echo "This update module must be run by a superuser. Aborting..."
+            echo "This update module must be run by a superuser. Aborting..." >&2
             exit 1
         fi
 
@@ -109,26 +141,36 @@ case "$STATE" in
 
         mkdir -p $dest_dir $state_dir
 
-        if [ -e $manifest_file ]; then
+        versioned_manifest_file=${manifest_file}.${FILE_ID}
+
+        if [ -e $versioned_manifest_file ]; then
+            echo "Manifest file ($versioned_manifest_file) exists, creating backup" >&2
             mkdir -p $backup_dir
 
             # Copy permissions and ownership from destination directory
             chmod $(stat -c %a $dest_dir) $backup_dir
             chown $(stat -c "%u:%g" $dest_dir) $backup_dir
 
-            sed "s|^|${dest_dir}|" $manifest_file  > /tmp/manifest
+            sed "s|^|${dest_dir}|" $versioned_manifest_file  > $FILE/tmp/manifest
 
-            tar -zcf ${prev_files_tar} -T /tmp/manifest
-            rm /tmp/manifest
+            tar -zcf ${backup_file}.${FILE_ID}.tgz -T $FILE/tmp/manifest
+            rm $FILE/tmp/manifest
             
-            for file in $(cat $manifest_file); do
+            # Remove files from previous deployment
+            for file in $(cat $versioned_manifest_file); do
+                echo "Removing $dest_dir/$file"
                 rm $dest_dir/$file
             done
 
-            mv $manifest_file $manifest_file_prev
+            echo "Moving $versioned_manifest_file to $manifest_file_prev.${FILE_ID}_prev" >&2
+            mv $versioned_manifest_file $manifest_file_prev.${FILE_ID}_prev
+        else 
+            echo "No previous manifest file ($versioned_manifest_file) found" >&2
         fi
+        
 
         mkdir -p ${dest_dir}
+        echo "Unpacking $update_files_tar to $dest_dir" >&2
         tar -xpf ${update_files_tar} -C ${dest_dir}
         sync
         mount_root_ro
@@ -136,27 +178,30 @@ case "$STATE" in
 
     ArtifactCommit)
         if [ $UID -ne 0 ] ; then
-            echo "This update module must be run by a superuser. Aborting..."
+            echo "This update module must be run by a superuser. Aborting..." >&2
             exit 1
         fi
         mount_root_rw
-        mv $manifest_file_from_deployment $manifest_file
+        mv $manifest_file_from_deployment $manifest_file.${FILE_ID}
         mount_root_ro
         ;;
 
     ArtifactRollback)
         if [ $UID -ne 0 ] ; then
-            echo "This update module must be run by a superuser. Aborting..."
+            echo "This update module must be run by a superuser. Aborting..." >&2
             exit 1
         fi
 
-        test -f $prev_files_tar || exit 0
+        backup_file=${backup_file}.${FILE_ID}.tgz
+
+        echo "Checking for backup file: $backup_file" >&2
+        test -f $backup_file || ( echo "Backup file not fond, exiting..."; exit 0)
 
         dest_dir=${mender_root_dir}$(cat $dest_dir_file)
 
         mount_root_rw
-        cp $manifest_file_prev $manifest_file
-        tar -xpf ${prev_files_tar} -C ${dest_dir}
+        cp $manifest_file_prev.${FILE_ID}_prev $manifest_file
+        tar -xpf ${backup_file} -C ${dest_dir}
         mount_root_ro
         ;;
 esac
